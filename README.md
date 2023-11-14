@@ -16,6 +16,13 @@ copy the https address:
 update the API address: (only change the url before "/callback")
 ![image](https://github.com/joabernarc/-/assets/42392392/bca000fb-0631-4e6b-b811-e5e5911a684f)
 
+Requirements:
+Python >= 3.8
+
+Installation:
+pip install line-bot-sdk
+pip install pandas
+
 Finished!
 
 
