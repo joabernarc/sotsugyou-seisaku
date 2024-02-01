@@ -31,9 +31,10 @@ from linebot.models import (
 app = Flask(__name__)
 
 access_token='cl2ehA91yxD/3uJRzDyls9SlRQTcprQVs7wRkMxog6d8LQK1+L9Z4SWnQoUukY5C8JNjml7xLrON9D7RMDfDeKyov5+tQ7WuSsA/5kTAB+5BgR/+7t9FIGzr/IqWu9Z9Guv9vzP526VC43HDjtOdWAdB04t89/1O/w1cDnyilFU='
-
+#ラインボットと接続する
 line_bot_api = LineBotApi(access_token)
 handler = WebhookHandler('3879d5592c6cff489b2ce1540972e4de')
+#最初で楽天からのデータベース取得
 res_rakuten = requests.get('https://app.rakuten.co.jp/services/api/Recipe/CategoryList/20170426?applicationId=1043289948570835263')
 rakuten_data = json.loads(res_rakuten.text)
 
@@ -46,16 +47,16 @@ second_choice = False
 empty_search = False
 parent_dict = {}
 print('starting database')
-#df = pd.DataFrame(columns=['category1','category2','category3','categoryId','categoryName'])
 
-# 大カテゴリ
+#データを整理する
+
 for category in rakuten_data['result']['large']:
     df = df._append({'category1':category['categoryId'],'category2':"",'category3':"",'categoryId':category['categoryId'],'categoryName':category['categoryName']}, ignore_index=True)
-# 中カテゴリ
+
 for category in rakuten_data['result']['medium']:
     df = df._append({'category1':category['parentCategoryId'],'category2':category['categoryId'],'category3':"",'categoryId':str(category['parentCategoryId'])+"-"+str(category['categoryId']),'categoryName':category['categoryName']}, ignore_index=True)
     parent_dict[str(category['categoryId'])] = category['parentCategoryId']
-# 小カテゴリ
+
 for category in rakuten_data['result']['small']:
     df = df._append({'category1':parent_dict[category['parentCategoryId']],'category2':category['parentCategoryId'],'category3':category['categoryId'],'categoryId':parent_dict[category['parentCategoryId']]+"-"+str(category['parentCategoryId'])+"-"+str(category['categoryId']),'categoryName':category['categoryName']}, ignore_index=True)
 print('finished database')
@@ -100,25 +101,28 @@ def response_message(event):
     #empty_search = user_states[user_id]['empty_search']
     textArr = []
     print('last_category_search:', last_category_search, category_selected)
+    #カテゴリーを決めた場合：
     if last_category_search.isnumeric() and category_selected:
         print('\nEntrou category_selected')
+        # 楽天のAPIを呼び出して、検索されたもののランキングをえる 
         category_ranking = requests.get(f'https://app.rakuten.co.jp/services/api/Recipe/CategoryRanking/20170426?applicationId=1043289948570835263&categoryId={df_keyword["categoryId"].values[int(input_text)-1]}')
         json_data_ranking = json.loads(category_ranking.text)
-        myDBB = pd.DataFrame(columns=['foodImageUrl','mediumImageUrl','nickname','recipeCost', 'recipeDescription', 'rank', 'smallImageUrl', 'recipeUrl', 'recipeTitle'])
+        #おすすめのレシピのカルーセル
+        carousel_db = pd.DataFrame(columns=['foodImageUrl','mediumImageUrl','nickname','recipeCost', 'recipeDescription', 'rank', 'smallImageUrl', 'recipeUrl', 'recipeTitle'])
         for detail in json_data_ranking['result']:
-            myDBB = myDBB._append({'foodImageUrl': detail['foodImageUrl'], 'mediumImageUrl': detail['mediumImageUrl'], 'nickname': detail['nickname'], 'recipeCost': detail['recipeCost'], 'recipeDescription': detail['recipeDescription'], 'rank': detail['rank'], 'smallImageUrl': detail['smallImageUrl'], 'recipeUrl': detail['recipeUrl'], 'recipeTitle': detail['recipeTitle']}, ignore_index=True)
+            carousel_db = carousel_db._append({'foodImageUrl': detail['foodImageUrl'], 'mediumImageUrl': detail['mediumImageUrl'], 'nickname': detail['nickname'], 'recipeCost': detail['recipeCost'], 'recipeDescription': detail['recipeDescription'], 'rank': detail['rank'], 'smallImageUrl': detail['smallImageUrl'], 'recipeUrl': detail['recipeUrl'], 'recipeTitle': detail['recipeTitle']}, ignore_index=True)
         carousel_items = []
-        for i, recipe in enumerate(myDBB["recipeUrl"], 1):
+        for i, recipe in enumerate(carousel_db["recipeUrl"], 1):
             carousel_column = {
-                "thumbnail_image_url": f"{myDBB['foodImageUrl'][i-1]}",
-                "title": f"{myDBB['recipeTitle'][i-1]}",
-                "text": f"{myDBB['recipeDescription'][i-1][:59]}",  # Corrected the syntax here
+                "thumbnail_image_url": f"{carousel_db['foodImageUrl'][i-1]}",
+                "title": f"{carousel_db['recipeTitle'][i-1]}",
+                "text": f"{carousel_db['recipeDescription'][i-1][:59]}",  # Corrected the syntax here
                 "actions": [
-                    {"type": "uri", "label": "レシピURLへ", "uri": f"{myDBB['recipeUrl'][i-1]}"}
+                    {"type": "uri", "label": "レシピURLへ", "uri": f"{carousel_db['recipeUrl'][i-1]}"}
                 ]
             }
             carousel_items.append(carousel_column)
-
+        #カルーセルのメッセージ
         messages = TemplateSendMessage(
             alt_text='template',
             template=CarouselTemplate(columns=carousel_items),
@@ -126,18 +130,22 @@ def response_message(event):
 
         line_bot_api.reply_message(event.reply_token, messages=messages)
         user_states[user_id]['category_selected'] = False
+    #カテゴリーを調べる場合：  
     else:
         print('searching category\n')
+        #javascriptのqueryを使って、最初に楽天から届いたデータベースで検索
         df_keyword = df.query(f'categoryName.str.contains("{event.message.text}")', engine='python').copy()
         print('query result\n', df_keyword)
         df_keyword.drop_duplicates('categoryName', inplace=True)
         delete_row = df_keyword[df_keyword["categoryName"]==input_text].index
         df_keyword = df_keyword.drop(delete_row).iloc[:5]
         user_states[user_id]['df_keyword'] = df_keyword
+        #レシピは見つからなかった
         if df_keyword.empty:
             print('entrou empty\n')
             textArr.append('レシピは見つかりませんでした！')
             user_states[user_id]['category_selected'] = False
+        #利用可能なカテゴリを表示する
         else:
             print('Make user choose category')
             for i, category in enumerate(df_keyword["categoryName"], 1):
@@ -146,7 +154,7 @@ def response_message(event):
                 textArr.append(f"{i} - {category}")
             user_states[user_id]['category_selected'] = True
         line_bot_api.reply_message(event.reply_token, messages=[TextMessage(text='\n\n'.join(textArr))] )
-
+#サーバーを実行する
 if __name__ == "__main__":
     warnings.filterwarnings("ignore", category=LineBotSdkDeprecatedIn30)
     port = int(os.getenv("PORT", 5000))
